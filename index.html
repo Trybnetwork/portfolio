@@ -243,7 +243,7 @@
       <form class="login-card" id="loginForm" autocomplete="off">
         <div class="brand-mark">TN</div>
         <p class="wordmark">TRYBNETWORK</p>
-        <p class="login-sub">Team dashboard — enter the team password to view platform figures.</p>
+        <p class="login-sub">Team dashboard — sign in to view platform figures.</p>
         <label for="pw">Team password</label>
         <input type="password" id="pw" placeholder="Password" required />
         <button type="submit" class="login-btn" id="loginBtn">View dashboard</button>
@@ -340,8 +340,9 @@
 
         var SUPABASE_URL = "https://zvubytosshkxpbpvgcsw.supabase.co";
         var ANON_KEY = "sb_publishable_c1sl1Mw4Y5EMWjkmYSzEow_m5Yowqk0";
-        var PASSWORD_HASH = "87f6d70d2cfc462c6121e9c77fa75994981ae637399aa9876650ce5fcd6a502f";
+        var TEAM_EMAIL = "team@trybnetwork.com";
         var PAGE_SIZE = 1000;
+        var accessToken = null;
 
         var unlocked = false;
         var refreshTimer = null;
@@ -356,39 +357,35 @@
         var lockBtn = document.getElementById("lockBtn");
         var updatedAt = document.getElementById("updatedAt");
 
-        /* ---------- auth ---------- */
-        function sha256Hex(text) {
-          var data = new TextEncoder().encode(text);
-          return crypto.subtle.digest("SHA-256", data).then(function (buf) {
-            var bytes = new Uint8Array(buf);
-            var hex = "";
-            for (var i = 0; i < bytes.length; i++) {
-              hex += ("0" + bytes[i].toString(16)).slice(-2);
-            }
-            return hex;
-          });
-        }
-
+        /* ---------- auth (real Supabase sign-in) ---------- */
         loginForm.addEventListener("submit", function (e) {
           e.preventDefault();
           loginError.style.display = "none";
           loginBtn.disabled = true;
-          loginBtn.textContent = "Checking…";
-          sha256Hex(pwInput.value).then(function (hex) {
+          loginBtn.textContent = "Signing in…";
+          fetch(SUPABASE_URL + "/auth/v1/token?grant_type=password", {
+            method: "POST",
+            headers: {
+              "apikey": ANON_KEY,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ email: TEAM_EMAIL, password: pwInput.value })
+          }).then(function (res) {
+            if (!res.ok) throw new Error("auth failed");
+            return res.json();
+          }).then(function (data) {
+            accessToken = data.access_token;
             loginBtn.disabled = false;
             loginBtn.textContent = "View dashboard";
-            if (hex === PASSWORD_HASH) {
-              pwInput.value = "";
-              unlock();
-            } else {
-              loginError.style.display = "block";
-              pwInput.select();
-            }
+            pwInput.value = "";
+            unlock();
           }).catch(function () {
+            accessToken = null;
             loginBtn.disabled = false;
             loginBtn.textContent = "View dashboard";
-            loginError.textContent = "Something went wrong checking the password.";
+            loginError.textContent = "Incorrect password. Try again.";
             loginError.style.display = "block";
+            pwInput.select();
           });
         });
 
@@ -403,6 +400,7 @@
 
         lockBtn.addEventListener("click", function () {
           unlocked = false;
+          accessToken = null;
           if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
           dashView.style.display = "none";
           loginView.style.display = "flex";
@@ -414,7 +412,7 @@
         function headers() {
           return {
             "apikey": ANON_KEY,
-            "Authorization": "Bearer " + ANON_KEY,
+            "Authorization": "Bearer " + (accessToken || ANON_KEY),
             "Accept": "application/json"
           };
         }
