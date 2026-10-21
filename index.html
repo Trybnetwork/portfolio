@@ -290,6 +290,26 @@
         </div>
 
         <div class="panel">
+          <h2>Team Generated Income <span class="tag">all time</span></h2>
+          <p class="panel-sub">What the platform itself earned: stakes from lost binary trades, plus the 10% house fee from PvP duels (Whot &amp; Ayo).</p>
+          <div class="mining-grid">
+            <div class="mining-cell">
+              <p class="stat-label">Trade losses</p>
+              <p class="stat-value mono" id="incTrade">—</p>
+            </div>
+            <div class="mining-cell">
+              <p class="stat-label">PvP duel fees</p>
+              <p class="stat-value mono" id="incPvp">—</p>
+            </div>
+          </div>
+          <div style="border-top: 2px solid var(--line); margin-top: 16px; padding-top: 14px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+            <p class="stat-label" style="margin: 0;">Total generated income</p>
+            <p class="stat-value mono" id="incTotal" style="color: var(--gold);">—</p>
+          </div>
+          <p class="stat-note">Main-balance stakes only — lost TrybCoin-funded stakes are coins, not dollars, and aren't counted.</p>
+        </div>
+
+        <div class="panel">
           <h2>Game P&amp;L <span class="tag">house view — settled games only</span></h2>
           <p class="panel-sub">What players staked, what was paid back out, and what the house kept.</p>
           <table class="pnl">
@@ -492,6 +512,26 @@
           });
         }
 
+        function loadIncome() {
+          var trade = null, pvp = null;
+          var tradeDone = fetchAll("tn_bids?select=stake,stake_source&status=eq.lost").then(function (rows) {
+            var total = 0;
+            rows.forEach(function (r) {
+              if ((r.stake_source || "main") === "main") total += num(r.stake);
+            });
+            trade = total;
+            setText("incTrade", money(total));
+          }).catch(function () { setText("incTrade", "—"); });
+          var pvpDone = fetchAll("tn_duels?select=settled_house&settled_house=not.is.null").then(function (rows) {
+            pvp = sumField(rows, "settled_house");
+            setText("incPvp", money(pvp));
+          }).catch(function () { setText("incPvp", "—"); });
+          return Promise.all([tradeDone, pvpDone]).then(function () {
+            if (trade !== null && pvp !== null) setText("incTotal", money(trade + pvp));
+            else setText("incTotal", "—");
+          });
+        }
+
         function pnlRow(label, staked, paid) {
           var net = staked - paid;
           return { label: label, staked: staked, paid: paid, net: net, ok: true };
@@ -635,7 +675,7 @@
         function loadAll() {
           refreshBtn.disabled = true;
           refreshBtn.textContent = "Loading…";
-          Promise.all([loadUsers(), loadBalance(), loadRequests(), loadMiners(), loadPnl(), loadNewUsers()])
+          Promise.all([loadUsers(), loadBalance(), loadRequests(), loadMiners(), loadIncome(), loadPnl(), loadNewUsers()])
             .then(function () {
               updatedAt.textContent = "Last updated " + timeFmt.format(new Date()) + " WAT";
               refreshBtn.disabled = false;
