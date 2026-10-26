@@ -290,7 +290,7 @@
         </div>
 
         <div class="panel">
-          <h2>Team Generated Income <span class="tag">all time</span></h2>
+          <h2>Team Generated Income <span class="tag" id="incTag">all time</span></h2>
           <p class="panel-sub">What the platform itself earned: stakes from lost binary trades, plus the 10% house fee from PvP duels (Whot &amp; Ayo).</p>
           <div class="mining-grid">
             <div class="mining-cell">
@@ -307,6 +307,7 @@
             <p class="stat-value mono" id="incTotal" style="color: var(--gold);">—</p>
           </div>
           <p class="stat-note">Main-balance stakes only — lost TrybCoin-funded stakes are coins, not dollars, and aren't counted.</p>
+          <p class="stat-note" id="baselineNote"></p>
         </div>
 
         <div class="panel">
@@ -467,6 +468,36 @@
           return isNaN(n) ? 0 : n;
         }
 
+        // Stats baseline (tn_settings "stats_baseline", written from the
+        // admin panel): the portfolio DISPLAYS current totals minus the
+        // baseline, so stats count from zero at the last reset. User
+        // balances and records are never touched by it.
+        var TB = null, TB_AT = null;
+        function adjT(v, b) {
+          var x = num(v) - (num(b) || 0);
+          return x > 0 ? Math.round(x * 100) / 100 : 0;
+        }
+        function loadBaseline() {
+          return fetchOne("tn_settings?select=value&key=eq.stats_baseline").then(function (rows) {
+            if (rows && rows.length && rows[0].value) {
+              try {
+                var parsed = JSON.parse(rows[0].value);
+                TB = parsed && parsed.team ? parsed.team : null;
+                if (parsed && parsed.at) {
+                  var d = new Date(parsed.at);
+                  TB_AT = isNaN(d.getTime()) ? null : dateFmt.format(d);
+                }
+              } catch (e) { TB = null; }
+            }
+            if (TB) {
+              var tag = document.getElementById("incTag");
+              if (tag) tag.textContent = "since reset";
+              var note = document.getElementById("baselineNote");
+              if (note && TB_AT) note.textContent = "Stats reset " + TB_AT + " \u2014 counting from zero since then. User balances and records are not affected.";
+            }
+          }).catch(function () { TB = null; });
+        }
+
         var moneyFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
         var countFmt = new Intl.NumberFormat("en-US");
         function money(v) { return moneyFmt.format(v); }
@@ -488,24 +519,24 @@
 
         function loadBalance() {
           return fetchAll("tn_wallets?select=main_balance").then(function (rows) {
-            setText("statBalance", money(sumField(rows, "main_balance")));
+            setText("statBalance", money(adjT(sumField(rows, "main_balance"), TB && TB.balance)));
           }).catch(function () { setText("statBalance", "—"); });
         }
 
         function loadRequests() {
           var dep = fetchAll("tn_requests?select=amount&type=eq.deposit&status=eq.approved").then(function (rows) {
-            setText("statInvested", money(sumField(rows, "amount")));
+            setText("statInvested", money(adjT(sumField(rows, "amount"), TB && TB.invested)));
           }).catch(function () { setText("statInvested", "—"); });
           var wd = fetchAll("tn_requests?select=amount&type=eq.withdrawal&status=eq.approved").then(function (rows) {
-            setText("statWithdrawn", money(sumField(rows, "amount")));
+            setText("statWithdrawn", money(adjT(sumField(rows, "amount"), TB && TB.withdrawn)));
           }).catch(function () { setText("statWithdrawn", "—"); });
           return Promise.all([dep, wd]);
         }
 
         function loadMiners() {
           return fetchAll("tn_miners?select=purchase_price,mining_balance").then(function (rows) {
-            setText("statMinerSales", money(sumField(rows, "purchase_price")));
-            setText("statMinerAccrued", money(sumField(rows, "mining_balance")));
+            setText("statMinerSales", money(adjT(sumField(rows, "purchase_price"), TB && TB.minerSales)));
+            setText("statMinerAccrued", money(adjT(sumField(rows, "mining_balance"), TB && TB.minerAccrued)));
           }).catch(function () {
             setText("statMinerSales", "—");
             setText("statMinerAccrued", "—");
@@ -520,14 +551,14 @@
               if ((r.stake_source || "main") === "main") total += num(r.stake);
             });
             trade = total;
-            setText("incTrade", money(total));
+            setText("incTrade", money(adjT(total, TB && TB.incTrade)));
           }).catch(function () { setText("incTrade", "—"); });
           var pvpDone = fetchAll("tn_duels?select=settled_house&settled_house=not.is.null").then(function (rows) {
             pvp = sumField(rows, "settled_house");
-            setText("incPvp", money(pvp));
+            setText("incPvp", money(adjT(pvp, TB && TB.incPvp)));
           }).catch(function () { setText("incPvp", "—"); });
           return Promise.all([tradeDone, pvpDone]).then(function () {
-            if (trade !== null && pvp !== null) setText("incTotal", money(trade + pvp));
+            if (trade !== null && pvp !== null) setText("incTotal", money(adjT(trade, TB && TB.incTrade) + adjT(pvp, TB && TB.incPvp)));
             else setText("incTotal", "—");
           });
         }
@@ -577,6 +608,9 @@
                 tr.firstChild.textContent = g.label;
               } else {
                 anyOk = true;
+                var bp = (TB && TB.pl && TB.pl[g.key]) || null;
+                d.staked = adjT(d.staked, bp && bp.staked);
+                d.paid = adjT(d.paid, bp && bp.paid);
                 totStaked += d.staked; totPaid += d.paid;
                 var net = d.staked - d.paid;
                 tr.innerHTML = "<td></td><td class='mono'></td><td class='mono'></td><td class='mono'></td>";
@@ -675,12 +709,13 @@
         function loadAll() {
           refreshBtn.disabled = true;
           refreshBtn.textContent = "Loading…";
-          Promise.all([loadUsers(), loadBalance(), loadRequests(), loadMiners(), loadIncome(), loadPnl(), loadNewUsers()])
-            .then(function () {
-              updatedAt.textContent = "Last updated " + timeFmt.format(new Date()) + " WAT";
-              refreshBtn.disabled = false;
-              refreshBtn.textContent = "Refresh";
-            });
+          loadBaseline().then(function () {
+            return Promise.all([loadUsers(), loadBalance(), loadRequests(), loadMiners(), loadIncome(), loadPnl(), loadNewUsers()]);
+          }).then(function () {
+            updatedAt.textContent = "Last updated " + timeFmt.format(new Date()) + " WAT";
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = "Refresh";
+          });
         }
       })();
     </script>
